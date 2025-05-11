@@ -1,0 +1,1046 @@
+---
+title: "ICM Change-Point Detection Algorithm - Results and Validation"
+author: "Isabel Mora Restrepo"
+date: "2025-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(fig.path = "Figures/")
+```
+
+Load necessary libraries and files with the functions corresponding to the algorithm implementation:
+
+```{r load_functions, message=FALSE}
+library(FNN)
+library(ggplot2)
+library(gridExtra)
+library(tidychangepoint)
+library(tidyverse)
+library(knitr)
+library(patchwork)
+
+source("Functions/non_conformity_measures.R")
+source("Functions/betting_functions.R")
+source("Functions/icm_main_algorithm.R")
+source("Functions/metrics_and_trials.R")
+```
+
+## Demonstration of Algorithm Functioning
+
+### Normal distribution before and after the change point
+
+```{r normal_initial_demo}
+set.seed(1234)
+
+test_size <- 10
+n <- 100
+change_point <- 50
+mean_before <- 0
+mean_after <- 2
+
+data_before <- rnorm(change_point + test_size, mean = mean_before, sd = 1)
+data_after <- rnorm(n - change_point, mean = mean_after, sd = 1)
+data_norm1 <- c(data_before, data_after)
+
+# Plot the generated data to visualize the change-point
+Index <- (-test_size+1):(n)
+df <- data.frame(Index = Index, Value = data_norm1)
+
+ggplot(df, aes(x = Index, y = Value)) +
+  geom_line(color = "cornflowerblue", linewidth = 1) +
+  geom_vline(aes(xintercept = 0, color = "End of Training Set"), linetype = "dotted", linewidth = 1) +
+  geom_vline(aes(xintercept = change_point, color = "True Change Point"), linetype = "dashed", linewidth = 1) +
+  scale_color_manual(name = "", values = c("End of Training Set" = "goldenrod4", "True Change Point" = "red")) +
+  labs(
+    title = "Time Series of Generated Data",
+    subtitle = "Training period, then change from N(0,1) to N(2,1)",
+    x = "Observation", y = "Value") +
+  theme_minimal()
+```
+
+```{r normal_initial_demo_martingale}
+set.seed(1234)
+ncm_7nn <- make_NCM_knn(k=7)
+th <- 3.5
+
+upper <- test_size-1
+lower <- test_size+1
+final <- n + test_size
+
+results <- icm_changepoint_detection(training_set = data_norm1[1:upper], new_data = data_norm1[lower:final], 
+                                      threshold = th, non_conformity_measure = ncm_7nn, betting_function = BF_constant)
+
+results$Index <- seq_along(results$Observation)
+
+detected_change_point <- which(results$Detected_Change == TRUE)[1]
+
+ggplot(results, aes(x = Index)) + 
+  geom_line(aes(y = Modified_C, color = "Circumcised ICM"), linewidth = 0.6) + 
+  geom_hline(aes(yintercept = th, color = "Threshold"), linetype = "dashed", linewidth = 0.8) + 
+  geom_vline(aes(xintercept = change_point, color = "Change Point"), linetype = "dashed", linewidth = 0.8) + 
+  geom_vline(aes(xintercept = detected_change_point, color = "Detected Change Point"), linetype = "dashed", linewidth = 0.8) +
+  labs(title = "Martingale Behavior with Threshold and Change Point Visualization", 
+       subtitle = "ICM Algorithm Implementation with 7NN NCM and Constant BF",
+       x = "Observation", 
+       y = "Martingale Value") + 
+  scale_color_manual(
+    name = "", 
+    values = c("Circumcised ICM" = "lightgreen", 
+               "Threshold" = "blue", 
+               "Change Point" = "orange", 
+               "Detected Change Point" = "maroon")) + 
+  theme_minimal() + 
+  theme(legend.position = "right")
+```
+
+### Uniform distribution before and exponential distribution after the change point
+
+```{r uni_exp_initial_demo}
+set.seed(1234)
+
+test_size <- 10
+n <- 100  
+change_point <- 50
+min_before <- 0 
+max_before <- 2
+rate_after <- 0.5
+
+data_before <- runif(change_point + test_size, min = min_before, max = max_before)
+data_after <- rexp(n - change_point, rate = rate_after)
+data_uni_exp <- c(data_before, data_after)
+
+# Plot the generated data to visualize the change-point
+Index <- (-test_size +1):n
+df <- data.frame(Index = Index, Value = data_uni_exp)
+
+ggplot(df, aes(x = Index, y = Value)) +
+  geom_line(color = "cornflowerblue", linewidth = 1) +
+  geom_vline(aes(xintercept = 0, color = "End of Training Set"), linetype = "dotted", linewidth = 1) +
+  geom_vline(aes(xintercept = change_point, color = "True Change Point"), linetype = "dashed", linewidth = 1) +
+  scale_color_manual(name = "", values = c("End of Training Set" = "goldenrod4", "True Change Point" = "red")) +
+  labs(
+    title = "Time Series of Generated Data",
+    subtitle = "Training period, then change from U(0,2) to Exp(0.5)",
+    x = "Observation", y = "Value") +
+  theme_minimal()
+```
+
+```{r uni_exp_initial_demo_martingale}
+set.seed(1234)
+ncm_mean <- make_NCM_mean()
+th <- 1.5
+
+upper <- test_size-1
+lower <- test_size+1
+final <- n + test_size
+
+results <- icm_changepoint_detection(training_set =  data_uni_exp[1:upper], new_data = data_uni_exp[lower:final], 
+                                      threshold = th, non_conformity_measure = ncm_mean, betting_function = BF_mixture)
+
+results$Index <- seq_along(results$Observation)
+
+detected_change_point <- which(results$Detected_Change == TRUE)[1]
+
+ggplot(results, aes(x = Index)) + 
+  geom_line(aes(y = Modified_C, color = "Circumcised ICM"), linewidth = 0.6) + 
+  geom_hline(aes(yintercept = th, color = "Threshold"), linetype = "dashed", linewidth = 0.8) + 
+  geom_vline(aes(xintercept = change_point, color = "Change Point"), linetype = "dashed", linewidth = 0.8) + 
+  geom_vline(aes(xintercept = detected_change_point, color = "Detected Change Point"), linetype = "dashed", linewidth = 0.8) +
+  labs(title = "Martingale Behavior with Threshold and Change Point Visualization", 
+       subtitle = "ICM Algorithm Implementation with Mean NCM and Mixture BF",
+       x = "Observation", 
+       y = "Martingale Value") + 
+  scale_color_manual(
+    name = "", 
+    values = c("Circumcised ICM" = "lightgreen", 
+               "Threshold" = "blue", 
+               "Change Point" = "orange", 
+               "Detected Change Point" = "maroon")) + 
+  theme_minimal() + 
+  theme(legend.position = "right")
+```
+
+## Replicate Main Figures of Guiding Article
+
+### Figure 1 (Version 1) - Behavior of Circumcised ICM vs. Original ICM
+
+```{r figure1_v1_constant}
+set.seed(1234)
+test_size <- 100
+n <- 1000
+change_point <- 500
+
+data_before <- rnorm(change_point + test_size, mean = 0, sd = 1)
+data_after <- rnorm(n - change_point, mean = 1.5, sd = 1)
+data_norm <- c(data_before, data_after)
+
+# Normal data without changepoint
+data_norm_ncp <- rnorm(n + test_size, mean = 0, sd = 1)
+
+upper <- test_size-1
+lower <- test_size+1
+final <- n + test_size
+
+ncm_nn <- make_NCM_knn(k=1)
+
+bf <- BF_constant
+
+th <- 10
+
+results <- icm_changepoint_detection(training_set = data_norm[1:upper], new_data = data_norm[lower:final], 
+                                      threshold = th, non_conformity_measure = ncm_nn, betting_function = bf)
+
+results_ncp <- icm_changepoint_detection(training_set = data_norm_ncp[1:upper], new_data = data_norm_ncp[lower:final], 
+                                      threshold = th, non_conformity_measure = ncm_nn, betting_function = bf)
+
+complete_results <- results
+
+complete_results$Index <- seq_along(results$Observation)
+complete_results$ICM_no_change <- results_ncp$Modified_C
+
+figure1_v1 <- ggplot(complete_results, aes(x = Index)) + 
+              geom_line(aes(y = Modified_C, color = "Circumcised ICM"), linewidth = 0.6) + 
+              geom_line(aes(y = ICM_no_change, color = "ICM Without CP"), linewidth = 0.6) + 
+              geom_line(aes(y = Modified_C_og, color = "Original ICM"), linewidth = 0.6) + 
+              geom_hline(aes(yintercept = th, color = "Threshold"), linetype = "dashed", linewidth = 0.8) + 
+              geom_vline(aes(xintercept = change_point, color = "Change Point"), linetype = "dashed", linewidth = 0.8) + 
+              labs(title = "Article Verification Figure 1 (Constant BF)",
+                   x = "Observation", 
+                   y = "Martingale Value") + 
+              scale_color_manual(
+                name = "", 
+                values = c("Original ICM" = "deepskyblue4", 
+                           "Circumcised ICM" = "lightgreen", 
+                           "ICM Without CP" = "brown1",
+                           "Threshold" = "blue", 
+                           "Change Point" = "orange")) + 
+              theme_minimal() + 
+              theme(legend.position = "right")
+
+figure1_v1
+```
+
+Same figure verification but using precomputed kernel density betting function:
+
+```{r figure1_v1_kernel}
+set.seed(1234)
+
+# Create the kernel density betting function based on the p-values of the training set
+training_set = data_norm[1:upper]
+bf <- make_precomputed_kd_BF(training_set, test_size, ncm_nn)
+
+th <- 3
+
+results <- icm_changepoint_detection(training_set = data_norm[1:upper], new_data = data_norm[lower:final], 
+                                      threshold = th, non_conformity_measure = ncm_nn, betting_function = bf)
+
+results_ncp <- icm_changepoint_detection(training_set = data_norm_ncp[1:upper], new_data = data_norm_ncp[lower:final], 
+                                      threshold = th, non_conformity_measure = ncm_nn, betting_function = bf)
+
+complete_results <- results
+
+complete_results$Index <- seq_along(results$Observation)
+complete_results$ICM_no_change <- results_ncp$Modified_C
+
+figure1_v1 <- ggplot(complete_results, aes(x = Index)) + 
+              geom_line(aes(y = Modified_C, color = "Circumcised ICM"), linewidth = 0.6) + 
+              geom_line(aes(y = ICM_no_change, color = "ICM Without CP"), linewidth = 0.6) + 
+              geom_line(aes(y = Modified_C_og, color = "Original ICM"), linewidth = 0.6) + 
+              geom_hline(aes(yintercept = th, color = "Threshold"), linetype = "dashed", linewidth = 0.8) + 
+              geom_vline(aes(xintercept = change_point, color = "Change Point"), linetype = "dashed", linewidth = 0.8) + 
+              labs(title = "Article Verification Figure 1 (Precomputed Kernel Density BF)", 
+                   x = "Observation", 
+                   y = "Martingale Value") + 
+              scale_color_manual(
+                name = "", 
+                values = c("Original ICM" = "deepskyblue4", 
+                           "Circumcised ICM" = "lightgreen", 
+                           "ICM Without CP" = "brown1",
+                           "Threshold" = "blue", 
+                           "Change Point" = "orange")) + 
+              theme_minimal() + 
+              theme(legend.position = "right")
+
+figure1_v1
+```
+
+### Figure 1 (Version 2) - ICM Behavior With Different Non-Conformity Measures
+
+```{r figure1_v2}
+set.seed(14)
+
+test_size <- 100
+n <- 1000
+change_point <- 500  # The change-point (at observation 500)
+
+data_before <- rnorm(change_point + test_size, mean = 0, sd = 1)
+data_after <- rnorm(n - change_point, mean = 1.5, sd = 1)
+data_norm <- c(data_before, data_after)
+
+# Normal data without changepoint
+data_norm_ncp <- rnorm(n + test_size, mean = 0, sd = 1)
+
+upper <- test_size-1
+lower <- test_size + 1
+final <- n + test_size
+
+ncm_nn <- make_NCM_knn(k=1)
+ncm_lr1 <- make_NCN_lr()
+ncm_lr_roll <- make_NCN_lr_rolling(window_size = 10)
+
+betting_function <- BF_mixture
+
+th <- 7
+
+results_knn <- icm_changepoint_detection(training_set = data_norm[1:upper], new_data = data_norm[lower:final], 
+                                      threshold = th, non_conformity_measure = ncm_nn, betting_function)
+
+results_ncp <- icm_changepoint_detection(training_set = data_norm_ncp[1:upper], new_data = data_norm_ncp[lower:final], 
+                                      threshold = th, non_conformity_measure = ncm_nn, betting_function)
+
+results_lr <- icm_changepoint_detection(training_set = data_norm[1:upper], new_data = data_norm[lower:final], 
+                                      threshold = th, non_conformity_measure = ncm_lr1, betting_function)
+
+results_lr_roll <- icm_changepoint_detection(training_set = data_norm[1:upper], new_data = data_norm[lower:final], 
+                                      threshold = th, non_conformity_measure = ncm_lr_roll, betting_function)
+
+agg_results <- data.frame(
+  ICM_KNN = results_knn$Modified_C,
+  ICM_LR = results_lr$Modified_C,
+  ICM_LR_roll = results_lr_roll$Modified_C,
+  ICM_no_change = results_ncp$Modified_C,
+  Index = seq_along(results_knn$Observation))
+
+figure1_v2 <- ggplot(agg_results, aes(x = Index)) + 
+              geom_line(aes(y = ICM_KNN, color = "ICM with 1NN NCM"), linewidth = 0.6) + 
+              geom_line(aes(y = ICM_LR, color = "ICM with LR NCM"), linewidth = 0.6) +
+              geom_line(aes(y = ICM_LR_roll, color = "ICM with LR NCM Rolling"), linewidth = 0.6) +
+              geom_hline(aes(yintercept = th, color = "Threshold"), linetype = "dashed", linewidth = 0.8) + 
+              geom_line(aes(y = ICM_no_change, color = "ICM Without CP"), linewidth = 0.6) +
+              geom_vline(aes(xintercept = change_point, color = "Change Point"), linetype = "dashed", linewidth = 0.8) + 
+              labs(title = "Article Verification Figure 1 (Version 2)",
+                   subtitle = "ICM Behavior With Different Non-Conformity Measures",
+                   x = "Observation", 
+                   y = "Martingale Value") + 
+              scale_color_manual(
+                name = "", 
+                values = c("ICM with 1NN NCM" = "cornflowerblue", 
+                           "ICM with LR NCM" = "darkgreen",
+                           "ICM with LR NCM Rolling" = "pink",
+                           "ICM Without CP" = "brown",
+                           "Threshold" = "black", 
+                           "Change Point" = "orange")) + 
+              theme_minimal() + 
+              theme(legend.position = "right")
+
+figure1_v2
+```
+
+### Figure 2 - Validity of ICM Algorithm with Small Train Sets
+
+```{r figure2_small_test_sizes}
+set.seed(234)
+test_sizes = seq(1, 5, by = 1)
+n <- 1500
+data_norm_ncp <- rnorm(n, mean = 0, sd = 1)
+bf <- BF_constant
+
+agg_results = data.frame(Index = seq(1, 1500))
+
+# Data without change point 
+for (i in seq_along(test_sizes)) {
+  m <- test_sizes[i] 
+  ncm_nn <- make_NCM_knn(k = ceiling(m/2))
+
+  results_ncp <- icm_changepoint_detection(training_set = data_norm_ncp[1:m], new_data = data_norm_ncp[m+1:n-m], 
+                                      threshold = th, non_conformity_measure = ncm_nn, betting_function = bf)
+  
+  column_name <- paste0("Train", m) 
+  agg_results[[column_name]] <- results_ncp$Modified_C 
+}
+
+# Data with change point (test size = 1)
+test_size = 1
+n <- 1500
+change_point <- 500  # The change-point (at observation 500)
+
+data_before <- rnorm(change_point, mean = 0, sd = 1)
+data_after <- rnorm(n - change_point, mean = 1, sd = 1)
+data_norm_small_ts <- c(data_before, data_after)
+
+ncm_1n <- make_NCM_knn(k=1)
+
+th <- 10
+
+results <- icm_changepoint_detection(training_set = data_norm_small_ts[test_size], new_data = data_norm_small_ts[test_size+1:n-test_size], 
+                                      threshold = th, non_conformity_measure = ncm_1n, betting_function = bf)
+
+agg_results$Train1cp <- results$Modified_C
+
+figure2 <- ggplot(agg_results, aes(x = Index)) + 
+          geom_line(aes(y = Train1, color = "Train set size m = 1"), linewidth = 0.3) +
+          geom_line(aes(y = Train2, color = "Train set size m = 2"), linewidth = 0.3) +
+          geom_line(aes(y = Train3, color = "Train set size m = 3"), linewidth = 0.3) + 
+          geom_line(aes(y = Train4, color = "Train set size m = 4"), linewidth = 0.3) + 
+          geom_line(aes(y = Train5, color = "Train set size m = 5"), linewidth = 0.3) + 
+          geom_line(aes(y = Train1cp, color = "With change point, m = 1"), linewidth = 0.5) + 
+          geom_hline(aes(yintercept = th, color = "Threshold"), linetype = "dashed", linewidth = 0.8) + 
+          geom_vline(aes(xintercept = change_point, color = "Change point"), linetype = "dashed", linewidth = 0.8) + 
+          labs(title = "Article Verification Figure 2",  
+               subtitle = "Validity Test of ICM: Case of Small Train Sets", 
+               x = "Observation", 
+               y = "Martingale Value") + 
+          scale_color_manual(name = "", 
+                             values = c("Train set size m = 1" = "royalblue3", 
+                                        "Train set size m = 2" = "darkgreen", 
+                                        "Train set size m = 3" = "brown",
+                                        "Train set size m = 4" = "mediumorchid4",
+                                        "Train set size m = 5" = "orange3",
+                                        "With change point, m = 1" = "lightskyblue2",
+                                        "Threshold" = "black", 
+                                        "Change point" = "orange")) + 
+          theme_minimal() + 
+          theme(legend.position = "right")
+
+figure2
+```
+
+## Replicate Experimental Setup and Evaluation Plots of Guiding Article
+
+```{r create_plot_experiments, include = FALSE}
+create_plot <- function(results, title) {
+  p <- ggplot(results, aes(x = Prob.False.Alarm, y = log_E_md, color = as.factor(Threshold))) +
+      geom_line(aes(group = 1), color = "gray70", linetype = "dashed") +
+      geom_point(size = 3) +
+      scale_color_viridis_d(name = "Threshold") +
+      labs(title = title, 
+           x = " \n Probability of False Alarm",
+           y = "\n Log(1 + Mean Delay)") +
+      theme_minimal() +
+      theme(
+        axis.title = element_text(size = 10),
+        axis.text = element_text(size = 6),
+        legend.title = element_text(size = 6),
+        legend.text = element_text(size = 6)
+      )
+  return(p)
+}
+```
+
+### Constant Betting Function
+
+```{r experiments_constant_bf}
+set.seed(NULL)
+threshold_values <- seq(1, 6, by = 0.5)
+n_trials = 100
+m = 200
+n = 1000
+NCM_7nn <- make_NCM_knn(k=7)
+
+results_constant_100_1 <- run_multiple_threshold_trials(threshold_values, theta = 100, 
+                              mu1 = 1, 
+                              test_size = m, n = n, 
+                              num_trials = n_trials, 
+                              betting_function = BF_constant,
+                              non_conformity_measure = NCM_7nn)
+
+results_constant_100_15 <- run_multiple_threshold_trials(threshold_values, theta = 100, 
+                              mu1 = 1.5, 
+                              test_size = m, n = n, 
+                              num_trials = n_trials, 
+                              betting_function = BF_constant,
+                              non_conformity_measure = NCM_7nn)
+
+results_constant_100_2 <- run_multiple_threshold_trials(threshold_values, theta = 100, 
+                              mu1 = 2, 
+                              test_size = m, n = n, 
+                              num_trials = n_trials, 
+                              betting_function = BF_constant,
+                              non_conformity_measure = NCM_7nn)
+
+results_constant_200_1 <- run_multiple_threshold_trials(threshold_values, theta = 200, 
+                              mu1 = 1, 
+                              test_size = m, n = n, 
+                              num_trials = n_trials, 
+                              betting_function = BF_constant,
+                              non_conformity_measure = NCM_7nn)
+
+results_constant_200_15 <- run_multiple_threshold_trials(threshold_values, theta = 200, 
+                              mu1 = 1.5, 
+                              test_size = m, n = n, 
+                              num_trials = n_trials, 
+                              betting_function = BF_constant,
+                              non_conformity_measure = NCM_7nn)
+
+results_constant_200_2 <- run_multiple_threshold_trials(threshold_values, theta = 200, 
+                              mu1 = 2, 
+                              test_size = m, n = n, 
+                              num_trials = n_trials, 
+                              betting_function = BF_constant,
+                              non_conformity_measure = NCM_7nn)
+
+```
+
+```{r performance_constant_bf, warning = FALSE}
+# Create plots for each result set
+plot_100_1_const <- create_plot(results_constant_100_1, "θ = 100, μ = 1")
+plot_100_15_const <- create_plot(results_constant_100_15, "θ = 100, μ = 1.5")
+plot_100_2_const <- create_plot(results_constant_100_2, "θ = 100, μ = 2")
+
+plot_200_1_const <- create_plot(results_constant_200_1, "θ = 200, μ = 1")
+plot_200_15_const <- create_plot(results_constant_200_15, "θ = 200, μ = 1.5")
+plot_200_2_const <- create_plot(results_constant_200_2, "θ = 200, μ = 2")
+
+plot_metrics_constant  <- (plot_100_1_const + plot_100_15_const + plot_100_2_const +
+                         plot_200_1_const + plot_200_15_const + plot_200_2_const) +
+                        plot_layout(ncol = 3, guides = 'collect', axis_titles = "collect") &
+                        theme(legend.position = "right")
+
+plot_metrics_constant + 
+ plot_annotation(title = "Performance Analysis for Constant Betting Function",
+                 theme = theme(plot.title = element_text(hjust = 0.5)))
+```
+
+### Mixture Betting Function
+
+```{r experiments_mixture_bf}
+threshold_values <- seq(1, 6, by = 0.5)
+n_trials = 100
+m = 200
+n = 1000
+NCM_7nn <- make_NCM_knn(k=7)
+
+results_mixture_100_1 <- run_multiple_threshold_trials(threshold_values, theta = 100, 
+                              mu1 = 1, 
+                              test_size = m, n = n, 
+                              num_trials = n_trials, 
+                              betting_function = BF_mixture,
+                              non_conformity_measure = NCM_7nn)
+
+results_mixture_100_15 <- run_multiple_threshold_trials(threshold_values, theta = 100, 
+                              mu1 = 1.5, 
+                              test_size = m, n = n, 
+                              num_trials = n_trials, 
+                              betting_function = BF_mixture,
+                              non_conformity_measure = NCM_7nn)
+
+results_mixture_100_2 <- run_multiple_threshold_trials(threshold_values, theta = 100, 
+                              mu1 = 2, 
+                              test_size = m, n = n, 
+                              num_trials = n_trials, 
+                              betting_function = BF_mixture,
+                              non_conformity_measure = NCM_7nn)
+
+results_mixture_200_1 <- run_multiple_threshold_trials(threshold_values, theta = 200, 
+                              mu1 = 1, 
+                              test_size = m, n = n, 
+                              num_trials = n_trials, 
+                              betting_function = BF_mixture,
+                              non_conformity_measure = NCM_7nn)
+
+results_mixture_200_15 <- run_multiple_threshold_trials(threshold_values, theta = 200, 
+                              mu1 = 1.5, 
+                              test_size = m, n = n, 
+                              num_trials = n_trials, 
+                              betting_function = BF_mixture,
+                              non_conformity_measure = NCM_7nn)
+
+results_mixture_200_2 <- run_multiple_threshold_trials(threshold_values, theta = 200, 
+                              mu1 = 2, 
+                              test_size = m, n = n, 
+                              num_trials = n_trials, 
+                              betting_function = BF_mixture,
+                              non_conformity_measure = NCM_7nn)
+
+```
+
+```{r performance_mixture_bf, warning = FALSE}
+# Create plots for each result set
+plot_100_1_mixt <- create_plot(results_mixture_100_1, "θ = 100, μ = 1")
+plot_100_15_mixt <- create_plot(results_mixture_100_15, "θ = 100, μ = 1.5")
+plot_100_2_mixt <- create_plot(results_mixture_100_2, "θ = 100, μ = 2")
+
+plot_200_1_mixt <- create_plot(results_mixture_200_1, "θ = 200, μ = 1")
+plot_200_15_mixt <- create_plot(results_mixture_200_15, "θ = 200, μ = 1.5")
+plot_200_2_mixt <- create_plot(results_mixture_200_2, "θ = 200, μ = 2")
+
+plot_metrics_mixture  <- (plot_100_1_mixt + plot_100_15_mixt + plot_100_2_mixt +
+                         plot_200_1_mixt + plot_200_15_mixt + plot_200_2_mixt) +
+                        plot_layout(ncol = 3, guides = 'collect', axis_titles = "collect") &
+                        theme(legend.position = "right")
+
+plot_metrics_mixture + 
+ plot_annotation(title = "Performance Analysis for Mixture Betting Function",
+                 theme = theme(plot.title = element_text(hjust = 0.5)))
+
+```
+
+### Precomputed Kernel Density Betting Function
+
+```{r experiments_kernel_bf}
+threshold_values <- seq(0.25, 2, by = 0.25)
+n_trials = 100
+m = 200
+n = 1000
+NCM_1nn <- make_NCM_knn(k=1)
+dummy_bf <- function(p){return(0)}
+
+results_pckernel_100_1 <- run_multiple_threshold_trials(threshold_values, theta = 100, 
+                              mu1 = 1, 
+                              test_size = m, n = n, 
+                              num_trials = n_trials, 
+                              betting_function = BF_dummy,
+                              non_conformity_measure = NCM_1nn,
+                              precomputed_kernel = TRUE)
+
+results_pckernel_100_15 <- run_multiple_threshold_trials(threshold_values, theta = 100, 
+                              mu1 = 1.5, 
+                              test_size = m, n = n, 
+                              num_trials = n_trials, 
+                              betting_function = BF_dummy,
+                              non_conformity_measure = NCM_1nn,
+                              precomputed_kernel = TRUE)
+
+results_pckernel_100_2 <- run_multiple_threshold_trials(threshold_values, theta = 100, 
+                              mu1 = 2, 
+                              test_size = m, n = n, 
+                              num_trials = n_trials, 
+                              betting_function = BF_dummy,
+                              non_conformity_measure = NCM_1nn, 
+                              precomputed_kernel = TRUE)
+
+results_pckernel_200_1 <- run_multiple_threshold_trials(threshold_values, theta = 200, 
+                              mu1 = 1, 
+                              test_size = m, n = n, 
+                              num_trials = n_trials, 
+                              betting_function = BF_dummy,
+                              non_conformity_measure = NCM_1nn,
+                              precomputed_kernel = TRUE)
+
+results_pckernel_200_15 <- run_multiple_threshold_trials(threshold_values, theta = 200, 
+                              mu1 = 1.5, 
+                              test_size = m, n = n, 
+                              num_trials = n_trials, 
+                              betting_function = BF_dummy,
+                              non_conformity_measure = NCM_1nn,
+                              precomputed_kernel = TRUE)
+
+results_pckernel_200_2 <- run_multiple_threshold_trials(threshold_values, theta = 200, 
+                              mu1 = 2, 
+                              test_size = m, n = n, 
+                              num_trials = n_trials, 
+                              betting_function = BF_dummy,
+                              non_conformity_measure = NCM_1nn,
+                              precomputed_kernel = TRUE)
+
+```
+
+```{r performance_kernel_bf, warning = FALSE}
+# Create plots for each result set
+plot_100_1_pck <- create_plot(results_pckernel_100_1, "θ = 100, μ = 1")
+plot_100_15_pck <- create_plot(results_pckernel_100_15, "θ = 100, μ = 1.5")
+plot_100_2_pck <- create_plot(results_pckernel_100_2, "θ = 100, μ = 2")
+
+plot_200_1_pck <- create_plot(results_pckernel_200_1, "θ = 200, μ = 1")
+plot_200_15_pck <- create_plot(results_pckernel_200_15, "θ = 200, μ = 1.5")
+plot_200_2_pck <- create_plot(results_pckernel_200_2, "θ = 200, μ = 2")
+
+plot_metrics_precomputed_kernel  <- (plot_100_1_pck + plot_100_15_pck + plot_100_2_pck +
+                                     plot_200_1_pck + plot_200_15_pck + plot_200_2_pck) +
+                                    plot_layout(ncol = 3, guides = 'collect', axis_titles = "collect") &
+                                    theme(legend.position = "right")
+
+plot_metrics_precomputed_kernel + 
+ plot_annotation(title = "Performance Analysis for Precomputed Kernel Density Betting Function",
+                 theme = theme(plot.title = element_text(hjust = 0.5)))
+
+```
+
+## Comparison with Traditional Methods
+
+### Normal distribution before and after the change point
+
+```{r normal_method_comparison, message=FALSE, warning=FALSE}
+set.seed(1234)
+
+test_size <- 10
+n <- 100
+change_point <- 50  
+mean_before <- 0
+mean_after <- 2
+
+data_before <- rnorm(change_point + test_size, mean = mean_before, sd = 1)
+data_after <- rnorm(n - change_point, mean = mean_after, sd = 1)
+data_norm <- c(data_before, data_after)
+
+upper <- test_size-1
+lower <- test_size+1
+final <- n + test_size
+
+betting_function <- BF_constant
+ncm_7n <- make_NCM_knn(k=7)
+th <- 3.5
+
+results_icm <- icm_changepoint_detection(training_set = data_norm[1:upper], new_data = data_norm[lower:final], 
+                                      threshold = th, non_conformity_measure = ncm_7n, betting_function)
+
+detected_cp_icm <- which(results_icm$Detected_Change == TRUE)[1]
+
+data_classic = data_norm[lower:final]
+
+result1 <- segment(data_classic, method = "pelt")
+result_pelt <- changepoints(result1)[1]
+
+result2 <- segment(data_classic, method = "random")
+result_random <- changepoints(result2)[1]
+
+result3 <- segment(data_classic, method = "ga-coen", maxiter = 10)
+result_ga <- as.vector(changepoints(result3)[1])
+
+ggplot(data.frame(x = 1:length(data_classic), y = data_classic), aes(x = x, y = y)) +
+  geom_line() +  # Plot the time series data
+  geom_vline(aes(xintercept = change_point, color = "Change Point"), linetype = "solid", linewidth = 1.2) +  # Real change-point
+  geom_vline(aes(xintercept = detected_cp_icm, color = "ICM Detected CP"),linetype = "dashed", linewidth = 1.2, alpha = 0.8) +
+  geom_vline(aes(xintercept = result_pelt, color = "PELT Detected CP"), linetype = "dashed", linewidth = 1.2, alpha = 0.8) +
+  geom_vline(aes(xintercept = result_random, color = "Random Basket Detected CP"), linetype = "dashed", linewidth = 1.2, alpha = 0.8) +  
+  geom_vline(aes(xintercept = result_ga, color = "GA Detected CP"), linetype = "dashed", linewidth = 1.2, alpha = 0.8) +  
+  labs(title = "Change Point Detection Comparison", 
+       subtitle = "Tidychangepoint algorithms versus ICM algorithm when chaging from N(0,1) to N(2,1)", 
+       x = "Observation", 
+       y = "Value") +
+  scale_color_manual(
+    name = "", 
+    values = c("ICM Detected CP" = "cornflowerblue", 
+               "PELT Detected CP" = "brown",
+               "Random Basket Detected CP" = "orange1",
+               "GA Detected CP" = "hotpink",
+               "Change Point" = "lightgreen")) + 
+  theme_minimal() + 
+  theme(legend.position = "right")
+```
+
+### Uniform distribution before and exponential distribution after the change point
+
+```{r, uni_exp_method_comparison, message=FALSE, warning = FALSE}
+set.seed(1234)
+
+test_size <- 10
+n <- 100  
+change_point <- 50
+min_before <- 0 
+max_before <- 2
+rate_after <- 0.5
+
+data_before <- runif(change_point + test_size, min = min_before, max = max_before)
+data_after <- rexp(n - change_point, rate = rate_after)
+data_uni_exp <- c(data_before, data_after)
+
+upper <- test_size-1
+lower <- test_size+1
+final <- n + test_size
+
+ncm_mean <- make_NCM_mean()
+th <- 1.5
+
+set.seed(1234)
+results_icm <- icm_changepoint_detection(training_set = data_uni_exp[1:upper], new_data = data_uni_exp[lower:final], 
+                                      threshold = th, non_conformity_measure = ncm_mean, betting_function = BF_mixture)
+
+detected_cp_icm <- which(results_icm$Detected_Change == TRUE)[1]
+
+data_classic = data_uni_exp[lower:final]
+
+result1 <- segment(data_classic, method = "pelt")
+result_pelt <- changepoints(result1)[1]
+
+result2 <- segment(data_classic, method = "random")
+result_random <-  as.vector(changepoints(result2)[1])
+
+result3 <- segment(data_classic, method = "ga-coen", maxiter = 10)
+result_ga <- as.vector(changepoints(result3)[1])
+
+ggplot(data.frame(x = 1:length(data_classic), y = data_classic), aes(x = x, y = y)) +
+  geom_line() +  # Plot the time series data
+  geom_vline(aes(xintercept = change_point, color = "Change Point"), linetype = "solid", linewidth = 1.2) +  # Real change-point
+  geom_vline(aes(xintercept = detected_cp_icm, color = "ICM Detected CP"),linetype = "dashed", linewidth = 1.2, alpha = 0.8) +
+  geom_vline(aes(xintercept = result_pelt, color = "PELT Detected CP"), linetype = "dashed", linewidth = 1.2, alpha = 0.8) +
+  geom_vline(aes(xintercept = result_random, color = "Random Basket Detected CP"), linetype = "dashed", linewidth = 1.2, alpha = 0.8) +  
+  geom_vline(aes(xintercept = result_ga, color = "GA Detected CP"), linetype = "dashed", linewidth = 1.2, alpha = 0.8) +  
+  labs(title = "Change Point Detection Comparison", 
+       subtitle = "Tidychangepoint algorithms versus ICM algorithm when chaging from U(0,2) to Exp(0.5)", 
+       x = "Observation", 
+       y = "Value") +
+  scale_color_manual(
+    name = "", 
+    values = c("ICM Detected CP" = "cornflowerblue", 
+               "PELT Detected CP" = "brown",
+               "Random Basket Detected CP" = "orange1",
+               "GA Detected CP" = "hotpink",
+               "Change Point" = "lightgreen")) + 
+  theme_minimal() + 
+  theme(legend.position = "right")
+```
+
+### Example on Real Data
+
+Using data on the difference in home runs per plate appearance between the American League and the National League from
+1925 to 2023. The changepoint is known to be 1973. 
+
+```{r baseball_comparison, warning = FALSE, message=FALSE}
+set.seed(234)
+baseball_data <- mlb_diffs$hr_rate_diff
+real_cp <- 1973
+test_size = 5
+
+year_vector <- mlb_diffs$yearID[test_size:length(mlb_diffs$yearID)]
+year_vector <- as.numeric(substr(year_vector, 1, 4)) # Extract only the year
+
+training_baseball <- baseball_data[1:test_size-1]
+test_baseball <- baseball_data[test_size:length(baseball_data)]
+
+betting_function <- BF_mixture
+ncm_nn <- make_NCM_knn(k=1)
+th <- 2.5
+
+results_icm <- icm_changepoint_detection(training_set = training_baseball, new_data = test_baseball, 
+                                      threshold = th, non_conformity_measure = ncm_nn, betting_function)
+
+detected_cp_icm <- which(results_icm$Detected_Change == TRUE)[1]
+result_icm_year <- year_vector[detected_cp_icm]
+
+result <- segment(test_baseball, method = "pelt")
+result_pelt <- changepoints(result)[1]
+result_pelt_year <- year_vector[result_pelt]
+
+result2 <- segment(test_baseball, method = "random")
+result_random <-  as.vector(changepoints(result2)[1])
+result_random_year <- year_vector[result_random]
+
+result3 <- segment(test_baseball, method = "ga-coen", maxiter = 50)
+result_ga <- as.vector(changepoints(result3)[1])
+result_ga_year <- year_vector[result_ga]
+
+plot_df <- data.frame(year = year_vector, value = test_baseball)
+
+ggplot(plot_df, aes(x = year, y = value)) +
+  geom_line() +  # Plot the time series data
+  geom_vline(aes(xintercept = real_cp, color = "Change Point"), linetype = "solid", linewidth = 1.2) +  # Real change-point
+  geom_vline(aes(xintercept = result_icm_year, color = "ICM Detected CP"),linetype = "dashed", linewidth = 1.2, alpha = 0.8) +
+  geom_vline(aes(xintercept = result_pelt_year, color = "PELT Detected CP"), linetype = "dashed", linewidth = 1.2, alpha = 0.8) +
+  geom_vline(aes(xintercept = result_random_year, color = "Random Basket Detected CP"), linetype = "dashed", linewidth = 1.2, alpha = 0.8) +  
+  geom_vline(aes(xintercept = result_ga_year, color = "GA Detected CP"), linetype = "dashed", linewidth = 1.2, alpha = 0.8) +  
+  labs(title = "Change Point Detection Comparison: Baseball Data", 
+       subtitle = "Analysis of algorithm performance on Home Run Differences between AL and NL", 
+       x = "Year", 
+       y = "Difference in home runs per plate appearance") +
+  scale_color_manual(
+    name = "", 
+    values = c("ICM Detected CP" = "cornflowerblue", 
+               "PELT Detected CP" = "brown",
+               "Random Basket Detected CP" = "orange1",
+               "GA Detected CP" = "hotpink",
+               "Change Point" = "lightgreen")) + 
+  theme_minimal() + 
+  theme(legend.position = "right")
+
+```
+
+```{r baseball_martingale}
+results_icm$Year <- year_vector
+
+ggplot(results_icm, aes(x = Year)) + 
+  geom_line(aes(y = Modified_C, color = "Circumcised ICM"), linewidth = 0.6) + 
+  geom_hline(aes(yintercept = th, color = "Threshold"), linetype = "dashed", linewidth = 0.8) + 
+  geom_vline(aes(xintercept = real_cp, color = "Changepoint"), linetype = "dashed", linewidth = 0.8) + 
+  labs(title = "ICM Algorithm on Real Baseball Data", 
+       subtitle = "Visualization of the importance of threshold selection in CP detection",
+       x = "Year", 
+       y = "Martingale Value") + 
+  scale_color_manual(
+    name = "", 
+    values = c("Circumcised ICM" = "lightgreen", 
+               "ICM Without CP" = "brown1",
+               "Threshold" = "blue", 
+               "Changepoint" = "orange")) + 
+  theme_minimal() + 
+  theme(legend.position = "right")
+```
+
+
+### Systematic Comparison: Mean Delay and Probabilty of False Alarm
+
+**Experiment 1**: 1000 data points with N(0, 1) before and N(2, 1) after changepoint at $\theta = 200$.
+
+```{r experiment1_comparison, message=FALSE, warning=FALSE}
+# Experimental setup 
+n <- 1000
+theta <- 200
+mu1 <- 2
+num_trials <- 100
+
+methods <- c("pelt", "random", "ga-coen")
+methods_full_names <- c("PELT", "Random Basket", "Genetic Algorithm (Coen)")
+
+# Run the evaluation for each tidychangepoint method and combine the results
+tidy_results <- do.call(rbind, lapply(seq_along(methods), function(i) {
+  method <- methods[i]
+  full_name <- methods_full_names[i]
+
+  # Measure execution time
+  start_time <- Sys.time()
+  result <- evaluate_tidychangepoint_method(theta = theta, mu1 = mu1, n = n, method = method, num_trials = num_trials)
+  end_time <- Sys.time()
+
+  avg_time <- as.numeric(difftime(end_time, start_time, units = "secs")) / num_trials
+
+  result$Method <- full_name
+  result$Avg_Time <- avg_time
+  return(result)
+}))
+
+
+NCM_7nn <- make_NCM_knn(k=7)
+
+# ICM algorithm with constant betting function
+th <- 3.5
+start_time <- Sys.time()
+results_icm_constant <- conduct_trials(theta = theta, mu1 = mu1, n = n, num_trials = num_trials,
+                                       betting_function = BF_constant, non_conformity_measure = NCM_7nn, th = th)
+end_time <- Sys.time()
+avg_time <- as.numeric(difftime(end_time, start_time, units = "secs")) / num_trials
+results_icm_constant$Method <- paste("ICM with Constant BF (h =", th, ")")
+results_icm_constant$Avg_Time <- avg_time
+results_icm_constant <- results_icm_constant %>% select(-Threshold)
+
+# ICM algorithm with mixture betting function
+th <- 4
+start_time <- Sys.time()
+results_icm_mixture <- conduct_trials(theta = theta, mu1 = mu1, n = n, num_trials = num_trials,
+                                      betting_function = BF_mixture, non_conformity_measure = NCM_7nn, th = th)
+end_time <- Sys.time()
+avg_time <- as.numeric(difftime(end_time, start_time, units = "secs")) / num_trials
+results_icm_mixture$Method <- paste("ICM with Mixture BF (h =", th, ")")
+results_icm_mixture$Avg_Time <- avg_time
+results_icm_mixture <- results_icm_mixture %>% select(-Threshold)
+
+# ICM algorithm with precomputed kernel density betting function
+th <- 1
+dummy_bf <- function(p) { return(0) }
+NCM_1nn <- make_NCM_knn(k = 1)
+start_time <- Sys.time()
+results_icm_kernel <- conduct_trials(theta = theta, mu1 = mu1, n = n, num_trials = num_trials,
+                                     betting_function = dummy_bf, non_conformity_measure = NCM_1nn, th = th, 
+                                     precomputed_kernel = TRUE)
+end_time <- Sys.time()
+avg_time <- as.numeric(difftime(end_time, start_time, units = "secs")) / num_trials
+results_icm_kernel$Method <- paste("ICM with Precomputed Kernel Density BF (h =", th, ")")
+results_icm_kernel$Avg_Time <- avg_time
+results_icm_kernel <- results_icm_kernel %>% select(-Threshold)
+```
+
+```{r comparison_results_1}
+combined_results <- rbind(tidy_results, results_icm_constant, results_icm_mixture, results_icm_kernel) %>%
+  select(Method, Mean.Delay, Prob.False.Alarm, Avg_Time) %>%
+  mutate(across(where(is.numeric), ~ round(.x, 3)))
+
+kable(combined_results, caption = "Comparison of Change Point Detection Methods: θ = 200, μ = 2", 
+      col.names = c( "Method", "Mean Delay", "False Alarm Probability", "Average Time (s)"))
+```
+
+```{r, include=FALSE}
+latex_table <- kable(combined_results, format = "latex", 
+                     caption = "Comparison of Change Point Detection Methods: θ = 200, μ = 2",
+                     col.names = c("Method", "Mean Delay", "False Alarm Probability", "Average Time (s)"))
+
+# Save the LaTeX table to a .tex file in the "figures" folder
+cat(latex_table, file = "figures/comparison_table_exp1.tex")
+```
+
+
+**Experiment 2**: 1000 data points with N(0, 1) before and N(1, 1) after change point at $\theta = 100$.
+
+```{r experiment2_comparison, message=FALSE, warning=FALSE}
+# Experimental setup 
+n <- 1000
+theta <- 100
+mu1 <- 1
+num_trials <- 100
+
+methods <- c("pelt", "random", "ga-coen")
+methods_full_names <- c("PELT", "Random Basket", "Genetic Algorithm (Coen)")
+
+# Run the evaluation for each tidychangepoint method and combine the results
+tidy_results <- do.call(rbind, lapply(seq_along(methods), function(i) {
+  method <- methods[i]
+  full_name <- methods_full_names[i]
+
+  # Measure execution time
+  start_time <- Sys.time()
+  result <- evaluate_tidychangepoint_method(theta = theta, mu1 = mu1, n = n, method = method, num_trials = num_trials)
+  end_time <- Sys.time()
+
+  avg_time <- as.numeric(difftime(end_time, start_time, units = "secs")) / num_trials
+
+  result$Method <- full_name
+  result$Avg_Time <- avg_time
+  return(result)
+}))
+
+
+NCM_7nn <- make_NCM_knn(k=7)
+
+# ICM algorithm with constant betting function
+th <- 3
+start_time <- Sys.time()
+results_icm_constant <- conduct_trials(theta = theta, mu1 = mu1, n = n, num_trials = num_trials,
+                                       betting_function = BF_constant, non_conformity_measure = NCM_7nn, th = th)
+end_time <- Sys.time()
+avg_time <- as.numeric(difftime(end_time, start_time, units = "secs")) / num_trials
+results_icm_constant$Method <- paste("ICM with Constant BF (h =", th, ")")
+results_icm_constant$Avg_Time <- avg_time
+results_icm_constant <- results_icm_constant %>% select(-Threshold)
+
+# ICM algorithm with mixture betting function
+th <- 2.5
+start_time <- Sys.time()
+results_icm_mixture <- conduct_trials(theta = theta, mu1 = mu1, n = n, num_trials = num_trials,
+                                      betting_function = BF_mixture, non_conformity_measure = NCM_7nn, th = th)
+end_time <- Sys.time()
+avg_time <- as.numeric(difftime(end_time, start_time, units = "secs")) / num_trials
+results_icm_mixture$Method <- paste("ICM with Mixture BF (h =", th, ")")
+results_icm_mixture$Avg_Time <- avg_time
+results_icm_mixture <- results_icm_mixture %>% select(-Threshold)
+
+# ICM algorithm with precomputed kernel density betting function
+th <- 1
+dummy_bf <- function(p) {return(0)}
+NCM_1nn <- make_NCM_knn(k = 1)
+start_time <- Sys.time()
+results_icm_kernel <- conduct_trials(theta = theta, mu1 = mu1, n = n, num_trials = num_trials,
+                                     betting_function = dummy_bf, non_conformity_measure = NCM_1nn, th = th, 
+                                     precomputed_kernel = TRUE)
+end_time <- Sys.time()
+avg_time <- as.numeric(difftime(end_time, start_time, units = "secs")) / num_trials
+results_icm_kernel$Method <- paste("ICM with Precomputed Kernel Density BF (h =", th, ")")
+results_icm_kernel$Avg_Time <- avg_time
+results_icm_kernel <- results_icm_kernel %>% select(-Threshold)
+```
+
+```{r comparison_results2}
+combined_results <- rbind(tidy_results, results_icm_constant, results_icm_mixture, results_icm_kernel) %>%
+  select(Method, Mean.Delay, Prob.False.Alarm, Avg_Time) %>%
+  mutate(across(where(is.numeric), ~ round(.x, 3)))
+
+kable(combined_results, caption = "Comparison of Change Point Detection Methods: θ = 100, μ = 1", 
+      col.names = c( "Method", "Mean Delay", "False Alarm Probability", "Average Time (s)"))
+```
+```{r, include=FALSE}
+latex_table <- kable(combined_results, format = "latex", 
+                     caption = "Comparison of Change Point Detection Methods: θ = 100, μ = 1",
+                     col.names = c("Method", "Mean Delay", "False Alarm Probability", "Average Time (s)"))
+
+# Save the LaTeX table to a .tex file in the "figures" folder
+cat(latex_table, file = "figures/comparison_table_exp2.tex")
+```
